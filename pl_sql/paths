@@ -1,0 +1,268 @@
+SET SERVEROUTPUT ON;
+
+--Создание таблицы с данными о расстояниях между городами
+
+/*CREATE TABLE PATHS(AID NUMBER(2), ACITY VARCHAR2(20), BID NUMBER(2), BCITY VARCHAR2(20), DIST NUMBER(2));
+
+--DROP TABLE PATHS;
+
+--Заполнение таблицы
+INSERT INTO PATHS VALUES(1, 'Moscow', 2, 'Kazan', 2);
+INSERT INTO PATHS VALUES(1, 'Moscow', 3, 'Tula', 4);
+INSERT INTO PATHS VALUES(1, 'Moscow', 4, 'Sochi', 7);
+INSERT INTO PATHS VALUES(1, 'Moscow', 6, 'Omsk', 5);
+INSERT INTO PATHS VALUES(2, 'Kazan', 4, 'Sochi', 6);
+INSERT INTO PATHS VALUES(2, 'Kazan', 7, 'Vologda', 8);
+INSERT INTO PATHS VALUES(2, 'Kazan', 5, 'Pskov', 3);
+INSERT INTO PATHS VALUES(3, 'Tula', 6, 'Omsk', 6);
+INSERT INTO PATHS VALUES(4, 'Sochi', 6, 'Omsk', 1);
+INSERT INTO PATHS VALUES(4, 'Sochi', 7, 'Vologda', 6);
+INSERT INTO PATHS VALUES(5, 'Pskov', 7, 'Vologda', 7);
+INSERT INTO PATHS VALUES(6, 'Omsk', 7, 'Vologda', 6);
+INSERT INTO PATHS VALUES(5, 'Pskov', 8, 'Spb', 6);
+INSERT INTO PATHS VALUES(7, 'Vologda', 8, 'Spb', 5);
+
+COMMIT;*/
+
+--Решение
+--Спецификация пакета
+/
+CREATE OR REPLACE PACKAGE PATH IS
+  PROCEDURE FIND_SHORTEST_PATH(START_CITY PATHS.ACITY%TYPE, FINISH_CITY PATHS.BCITY%TYPE);
+END PATH;
+
+--Тело пакета
+/
+CREATE OR REPLACE PACKAGE BODY PATH IS
+--ПЕРЕМЕННЫЕ:
+  TYPE way_rec IS RECORD(WSTR VARCHAR2(100), RESDIS NUMBER(3), LASTCITY PATHS.ACITY%TYPE);
+  TYPE ways_tab IS TABLE OF way_rec;
+--ФУНКЦИИ И ПРОЦЕДУРЫ:
+  FUNCTION CREATE_START_PATH_TAB(START_CITY PATHS.ACITY%TYPE) RETURN ways_tab;
+  FUNCTION DIFFERENT_CITY(SAMPLE_CITY PATHS.ACITY%TYPE, ACITY PATHS.ACITY%TYPE, BCITY PATHS.ACITY%TYPE) RETURN PATHS.ACITY%TYPE;
+  FUNCTION FIND_PATH(START_CITY PATHS.ACITY%TYPE, FINISH_CITY PATHS.BCITY%TYPE) RETURN ways_tab;
+  FUNCTION ISCYCLE(STR IN VARCHAR2, CITY IN PATHS.ACITY%TYPE) RETURN BOOLEAN;
+  PROCEDURE MAKE_NEXT_STEP(OLD_TAB IN ways_tab, FINISH_CITY IN PATHS.BCITY%TYPE, FOUND_PATHS IN OUT ways_tab);
+  
+  --Функция создаёт на основе таблицы PATHS индексную таблицу всех дорог из города START_CITY.
+  --Вход: START_CITY - город, от которого нужно проложить путь.
+  --Выход: индексная таблица с путями из START_CITY
+  FUNCTION CREATE_START_PATH_TAB(START_CITY PATHS.ACITY%TYPE) 
+  RETURN ways_tab IS
+    temp_tab ways_tab := ways_tab();
+    v_wayRec way_rec;
+    CURSOR c_ways IS
+      SELECT ACITY, BCITY, DIST
+      FROM PATHS
+      WHERE ACITY = START_CITY OR BCITY = START_CITY;
+    v_ind NUMBER(3) := 1;
+    next_city PATHS.ACITY%TYPE;
+  BEGIN
+    -- Прямой путь между START_CITY и FINISH_CITY
+    /*v_wayRec.WSTR := START_CITY || ' - ' || FINISH_CITY;
+    FOR rec IN c_ways LOOP
+        IF rec.A_CITY = FINISH_CITY OR rec.B_CITY = FINISH_CITY THEN
+          v_wayRec.RESDIS := rec.DIST;
+          v_wayRec.LASTCITY := FINISH_CITY;
+          temp_tab.EXTEND;
+          temp_tab(v_ind) := v_wayRec;
+          v_ind := v_ind + 1;
+        END IF;
+    END LOOP;*/
+    -- др
+    FOR rec IN c_ways LOOP
+      --Определяем следующий город
+      next_city := DIFFERENT_CITY(START_CITY, rec.ACITY, rec.BCITY);
+      --Создаём запись
+      v_wayRec.WSTR := START_CITY || ' - ' || next_city;
+      v_wayRec.RESDIS := rec.DIST;
+      v_wayRec.LASTCITY := next_city;
+      --Добавляем запись
+      temp_tab.EXTEND;
+      temp_tab(v_ind) := v_wayRec;
+      --Увеличиваем счётчик индекса таблицы
+      v_ind := v_ind + 1;
+    END LOOP;
+    RETURN temp_tab;
+  END CREATE_START_PATH_TAB;
+  
+  --Функция определяет город, отличный от двух других
+  --Вход: SAMPLE_CITY - образец; ACITY - первый город для сравнения; BCITY - второй город для сравнения.
+  --Выход: название отличного города.
+  FUNCTION DIFFERENT_CITY(
+    SAMPLE_CITY PATHS.ACITY%TYPE,
+    ACITY PATHS.ACITY%TYPE,
+    BCITY PATHS.ACITY%TYPE) 
+  RETURN PATHS.ACITY%TYPE IS
+  BEGIN
+    IF SAMPLE_CITY = ACITY THEN
+      RETURN BCITY;
+    ELSE
+      RETURN ACITY;
+    END IF;
+  END;
+  
+  --Функция ищет все пути между двумя указанными городами.
+  --Вход: START_CITY - откуда; FINISH_CITY - куда.
+  --Выход: таблица всех путей из START_CITY в FINISH_CITY.
+  FUNCTION FIND_PATH(
+    START_CITY PATHS.ACITY%TYPE,
+    FINISH_CITY PATHS.BCITY%TYPE)
+  RETURN ways_tab IS
+    --Переменные
+    v_distance NUMBER(3); --расстояние
+    v_wayStr VARCHAR2(100); --путь
+    e_sameCity EXCEPTION;
+    new_rec way_rec;
+    --Объявление и инициализация вложенных таблиц
+    pathsTab ways_tab := ways_tab();
+    foundPathTab ways_tab := ways_tab();
+  BEGIN
+    --Если был указан один и тот же город
+    IF START_CITY = FINISH_CITY THEN
+      RAISE e_sameCity;
+    ELSE
+      --Создаём индексную таблицу с заготовкой путей из START_CITY
+      pathsTab := CREATE_START_PATH_TAB(START_CITY);
+      
+      /*FOR i IN pathsTab.FIRST..pathsTab.LAST LOOP
+          DBMS_OUTPUT.PUT_LINE(pathsTab(i).RESDIS || ' - '|| pathsTab(i).WSTR);
+      END LOOP;*/
+      --Строим все пути до FINISH_CITY
+      MAKE_NEXT_STEP(pathsTab, FINISH_CITY, foundPathTab);
+      FOR i IN pathsTab.FIRST..pathsTab.LAST LOOP
+            IF pathsTab(i).LASTCITY = FINISH_CITY THEN
+            --DBMS_OUTPUT.PUT_LINE(pathsTab(i).RESDIS || ' - '|| pathsTab(i).WSTR);
+            new_rec.WSTR := /*pathsTab(i).RESDIS || ' - '||*/ pathsTab(i).WSTR;
+            new_rec.RESDIS := pathsTab(i).RESDIS;
+            new_rec.LASTCITY := FINISH_CITY;
+            foundPathTab.EXTEND;
+            foundPathTab(foundPathTab.LAST) := new_rec;
+            /*foundPathTab.EXTEND;
+            foundPathTab(1).WSTR := pathsTab(i).RESDIS || ' - '|| pathsTab(i).WSTR;
+            foundPathTab(1).RESDIS := pathsTab(i).RESDIS;
+            foundPathTab(1).LASTCITY := FINISH_CITY;*/
+            END IF;
+      END LOOP;
+    END IF;
+    --Выведем все найденные пути и перенесём их в таблицу для вывода из функции
+    FOR i IN foundPathTab.FIRST..foundPathTab.LAST LOOP
+      DBMS_OUTPUT.PUT_LINE(foundPathTab(i).RESDIS || ' - '|| foundPathTab(i).WSTR);
+    END LOOP;
+    RETURN foundPathTab;
+  EXCEPTION
+    WHEN e_sameCity THEN
+      DBMS_OUTPUT.PUT_LINE('Выбран один и тот же город!');
+    WHEN OTHERS THEN
+      DBMS_OUTPUT.PUT_LINE('Ошибка!');
+  END FIND_PATH;
+  
+  --Процедура находит самый короткий путь между указанными городами.
+  --Вход: START_CITY - откуда; FINISH_CITY - куда.
+  PROCEDURE FIND_SHORTEST_PATH(
+    START_CITY PATHS.ACITY%TYPE,
+    FINISH_CITY PATHS.BCITY%TYPE) IS
+    minDist NUMBER(3);
+    shPathTab ways_tab := ways_tab();
+  BEGIN
+    --Найдём все пути из START_CITY в FINISH_CITY
+    DBMS_OUTPUT.PUT_LINE('Существующие пути из ' || START_CITY || ' в ' || FINISH_CITY || ': ');
+    shPathTab := FIND_PATH(START_CITY, FINISH_CITY);
+    --Определяем наименьшее расстояние
+    minDist := shPathTab(1).RESDIS;
+    FOR i IN shPathTab.NEXT(1)..shPathTab.LAST LOOP
+      IF shPathTab(i).RESDIS < minDist THEN
+        minDist := shPathTab(i).RESDIS;
+      END IF;
+    END LOOP;
+    DBMS_OUTPUT.PUT_LINE('Самый короткий путь из ' || START_CITY || ' в ' || FINISH_CITY || ': ');
+    --Получим наикратчайший путь (пути)
+    FOR i IN shPathTab.FIRST..shPathTab.LAST LOOP
+      IF shPathTab(i).RESDIS = minDist THEN
+        --Вывод пути на экран
+        DBMS_OUTPUT.PUT_LINE(shPathTab(i).WSTR);
+      END IF;
+    END LOOP;
+    DBMS_OUTPUT.PUT_LINE('Расстояние: ' || minDist);
+  END FIND_SHORTEST_PATH;
+  
+  --Функция проверяет, появится ли цикл при добавлении в конец пути нового города (т.е. есть ли этот город в строке STR)
+  --Вход: STR - строка пройденного пути; CITY - название города.
+  --Выход: TRUE - если город уже входит в данный путь; FALSE - если город встречается на пути впервые.
+  FUNCTION ISCYCLE(STR IN VARCHAR2, CITY IN PATHS.ACITY%TYPE)
+    RETURN BOOLEAN IS
+  BEGIN
+    IF INSTR(STR, CITY) = 0 THEN
+      RETURN FALSE;
+    ELSE
+      RETURN TRUE;
+    END IF;
+  END ISCYCLE;
+  
+  --Процедура добавляет следующий возможный шаг для всех путей
+  --Вход: WTAB - индексная таблица путей; FINISH_CITY - целевой город.
+  --Выход: изменённая индексная таблица WTAB
+  PROCEDURE MAKE_NEXT_STEP(
+    OLD_TAB IN ways_tab,
+    FINISH_CITY IN PATHS.BCITY%TYPE,
+    FOUND_PATHS IN OUT ways_tab) IS
+  new_tab ways_tab := ways_tab();
+  new_tab_rec way_rec;
+  --Этот курсор будет извлекать все пути, которые начинаются или заканчиваются в указанном городе
+  CURSOR c_way_from(CITY_FROM PATHS.ACITY%TYPE) IS
+    SELECT ACITY, BCITY, DIST
+    FROM PATHS
+    WHERE ACITY = CITY_FROM OR BCITY = CITY_FROM;
+  TYPE t_path_rec IS RECORD(ACITY PATHS.ACITY%TYPE, BCITY PATHS.BCITY%TYPE, DIS PATHS.DIST%TYPE);
+  path_rec t_path_rec;
+  next_city PATHS.ACITY%TYPE;
+  BEGIN
+    --Проверяем, существуют ли ещё потенциальные пути до FINISH_CITY (т.е. пуста ли таблица OLD_TAB). Если таблица OLD_TAB пуста, то выходим из процедуры MAKE_NEXT_STEP
+    IF OLD_TAB.COUNT = 0 THEN
+      RETURN;
+    END IF;
+    FOR i IN OLD_TAB.FIRST..OLD_TAB.LAST LOOP
+      --Находим все дороги из конечного города текущего пути
+      OPEN c_way_from(OLD_TAB(i).LASTCITY);
+      LOOP
+        --Извлечение очередной строки данных из курсора c_way_from и присваивание её содержимого переменной path_rec
+        FETCH c_way_from INTO path_rec;
+        EXIT WHEN c_way_from%NOTFOUND;
+        --Определяем следующий город на пути
+        next_city := DIFFERENT_CITY(OLD_TAB(i).LASTCITY, path_rec.ACITY, path_rec.BCITY);
+        --Проверяем, появится ли цикл при добавлении в текущий путь города next_city
+        IF ISCYCLE(OLD_TAB(i).WSTR, next_city) THEN
+          --Если город next_city уже был пройден в текущем пути, то пропускаем данную дорогу и переходим к следующей
+          CONTINUE;
+          
+        END IF;
+        --Составим новую запись для новой таблицы путей
+        new_tab_rec.WSTR := OLD_TAB(i).WSTR || ' - ' || next_city;
+        new_tab_rec.RESDIS := OLD_TAB(i).RESDIS + path_rec.DIS;
+        new_tab_rec.LASTCITY := next_city;
+        IF next_city = FINISH_CITY THEN
+          --Добавим запись в таблицу искомых путей
+          FOUND_PATHS.EXTEND;
+          FOUND_PATHS(FOUND_PATHS.LAST) := new_tab_rec;
+        ELSE
+          --Добавим запись в новую таблицу путей
+          new_tab.EXTEND;
+          new_tab(new_tab.LAST) := new_tab_rec;
+        END IF;
+      END LOOP;
+      CLOSE c_way_from;
+    END LOOP;
+    --Рекурсивно вызываем процедуру MAKE_NEXT_STEP для таблицы путей new_tab
+    MAKE_NEXT_STEP(new_tab, FINISH_CITY, FOUND_PATHS);
+  END MAKE_NEXT_STEP;
+END PATH;
+
+--------------------------------------------------------------------------
+/
+--Вызов процедуры поиска кратчайшего пути:
+DECLARE
+  START_CITY PATHS.ACITY%TYPE := 'Pskov';
+  FINISH_CITY PATHS.ACITY%TYPE := 'Vologda';
+BEGIN
+  PATH.FIND_SHORTEST_PATH(START_CITY, FINISH_CITY);
+END;
