@@ -1,0 +1,93 @@
+/*Создание временной таблицы для преобразования значения по умолчанию*/
+CREATE TABLE temp_default_vals1
+    AS SELECT table_name
+              ,column_name d_column
+              ,to_lob(data_default) data_default
+              ,COLUMN_ID c_id
+        FROM user_tab_columns
+        WHERE data_default IS NOT NULL;
+
+SELECT t1.table_name as SUPP
+       ,t1.constraint_name as PK_COL1
+       ,NVL(t2.constraint_name, '-') as PK2_COL2
+       ,t3.PK_count as PK_COL_CNT
+       ,NVL(t4.RT1, '-') as CUST1
+       ,NVL(t5.RT2, '-') as CUST2
+       ,NVL(t6.count_RT, 0) as CUST_CNT
+       ,NVL(t7.d_column, '-') as DEF_COL1
+       ,NVL(t7.data_default, '-') as DEF1
+FROM 
+/*Получение имён и имён первого столбца первичного ключа*/
+    (SELECT uc.table_name, ucc.constraint_name
+    FROM user_constraints uc
+    JOIN user_cons_columns ucc
+    ON ucc.constraint_name = uc.constraint_name
+    WHERE uc.constraint_type = 'P'
+    AND ucc.position = 1) t1
+LEFT JOIN 
+/*Получение имён второго столбца первичного ключа*/
+    (SELECT uc.table_name, ucc.constraint_name
+    FROM user_constraints uc
+    JOIN user_cons_columns ucc
+    ON ucc.constraint_name = uc.constraint_name
+    WHERE uc.constraint_type = 'P'
+    AND ucc.position = 2) t2
+ON t1.table_name = t2.table_name
+LEFT JOIN 
+/*Получение общего числа столбцов первичного ключа*/
+    (select uc.table_name as table_name, count(ucc.column_name) as PK_count
+    from user_constraints uc
+    JOIN user_cons_columns ucc
+    ON ucc.constraint_name = uc.constraint_name
+    where uc.constraint_type = 'P'
+    group by uc.table_name) t3
+ON t1.table_name = t3.table_name
+/*Получение имени первой (по алфавиту) подчиненной таблицы*/
+LEFT JOIN 
+    (SELECT uc1.table_name, min(uc2.table_name) as RT1
+    FROM user_constraints uc1
+    JOIN user_constraints uc2
+    ON uc1.constraint_name = uc2.r_constraint_name
+    WHERE uc2.constraint_type = 'R'
+    GROUP BY uc1.table_name) t4
+ON t1.table_name = t4.table_name
+/*Получение имени второй (по алфавиту) подчиненной таблицы*/
+LEFT JOIN 
+    (SELECT uc1.table_name, min(uc3.table_name) as RT2
+    FROM user_constraints uc1
+    JOIN user_constraints uc2
+    ON uc1.constraint_name = uc2.r_constraint_name
+    JOIN user_constraints uc3
+    ON uc1.constraint_name = uc3.r_constraint_name
+    WHERE uc2.constraint_type = 'R'
+    AND uc3.constraint_type = 'R'
+    AND uc3.table_name > uc2.table_name
+    GROUP BY uc1.table_name) t5
+ON t1.table_name = t5.table_name
+/*Получение общего количества подчиненных таблиц у рассматриваемой таблицы*/
+LEFT JOIN
+    (SELECT tab.parient
+           ,count(tab.child) as count_RT
+     FROM
+        (SELECT uc1.table_name parient
+               ,uc2.table_name child
+        FROM user_constraints uc1
+        JOIN user_constraints uc2 
+        ON uc2.r_constraint_name = uc1.constraint_name
+        WHERE
+        uc2.constraint_type = 'R') tab
+     GROUP BY tab.parient) t6
+ON t1.table_name = t6.parient
+/*Получение имени первого столбца со значением по умолчанию и первого значения по умолчанию*/
+LEFT JOIN
+    (SELECT tab1.table_name
+           ,tab1.d_column
+           ,tab1.data_default
+    FROM temp_default_vals1 tab1
+    JOIN (SELECT table_name
+                 ,min(c_id) m_c_id
+          FROM temp_default_vals1 
+          GROUP BY table_name) tab2
+    ON tab1.table_name = tab2.table_name
+    AND tab1.c_id = tab2.m_c_id) t7
+ON t1.table_name = t7.table_name
