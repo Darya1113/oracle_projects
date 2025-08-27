@@ -1,0 +1,85 @@
+SET SERVEROUTPUT ON;
+DECLARE
+  TYPE chessboard_array IS TABLE OF PLS_INTEGER INDEX BY PLS_INTEGER;
+  TYPE chessboard_type IS TABLE OF chessboard_array INDEX BY PLS_INTEGER; --пользовательский тип для хранения доски
+  chessboard chessboard_type;
+  x_start integer; -- задаём стартовую позицию по х
+  y_start integer; -- задаём стартовую позицию по у
+  board_size INTEGER := 6; -- размерность доски
+  N INTEGER; -- задаём максимальное количество решений
+  -------------
+  move_count INTEGER := 1; -- счётчик шагов
+  found_solution BOOLEAN := FALSE; -- флаг нахождения решения
+  solution_count INTEGER := 0; -- кол-во найденных решений
+  incorrect_start_position exception;
+  N_reached exception;
+
+  FUNCTION DisplayBoard(chessboard_in chessboard_type) RETURN VARCHAR2 IS -- функция для отображения доски
+    v_output VARCHAR2(4000);
+  BEGIN
+    FOR i IN 1..board_size LOOP
+      FOR j IN 1..board_size LOOP
+        v_output := v_output || '|' || LPAD(TO_CHAR(chessboard_in(i)(j), 'FM00'), 2);
+      END LOOP;
+      v_output := v_output || '|';
+      v_output := v_output || CHR(10);
+    END LOOP;
+    v_output := v_output || '-------------------';
+    RETURN v_output;
+  END DisplayBoard;
+
+  PROCEDURE KnightTour(x_in IN INTEGER, y_in IN INTEGER, move_count_in IN INTEGER) IS -- процедура для совершеня хода коня
+  BEGIN
+  IF (x_start > board_size or x_start < 1) or (y_start > board_size or y_start < 1)  THEN
+         raise incorrect_start_position;
+        END IF;
+    IF x_in >= 1 AND x_in <= board_size AND y_in >= 1 AND y_in <= board_size AND chessboard(x_in)(y_in) = 0 THEN
+      chessboard(x_in)(y_in) := move_count_in;
+
+      IF move_count_in = board_size * board_size THEN
+        DBMS_OUTPUT.PUT_LINE(DisplayBoard(chessboard));
+        found_solution := TRUE;
+        solution_count := solution_count + 1;
+        IF solution_count >= N THEN
+          raise N_reached;
+        END IF;
+      ELSE
+        KnightTour(x_in+2, y_in+1, move_count_in+1);
+        KnightTour(x_in+1, y_in+2, move_count_in+1);
+        KnightTour(x_in-1, y_in+2, move_count_in+1);
+        KnightTour(x_in-2, y_in+1, move_count_in+1);
+        KnightTour(x_in-2, y_in-1, move_count_in+1);
+        KnightTour(x_in-1, y_in-2, move_count_in+1);
+        KnightTour(x_in+1, y_in-2, move_count_in+1);
+        KnightTour(x_in+2, y_in-1, move_count_in+1);
+      END IF;
+
+      chessboard(x_in)(y_in) := 0;
+    END IF;
+  END KnightTour;
+
+BEGIN
+    x_start := &x_start;
+    y_start := &y_start;
+    N := &N;
+  FOR i IN 1..board_size LOOP
+    FOR j IN 1..board_size LOOP-- цикл для очистки доски
+      chessboard(i)(j) := 0;
+    END LOOP;
+  END LOOP;
+  
+  BEGIN
+    KnightTour(x_start, y_start, move_count); -- вызов процедуры для совершения хода 
+  EXCEPTION
+    WHEN N_reached THEN
+    DBMS_OUTPUT.PUT_LINE('N reached');
+    WHEN incorrect_start_position THEN
+    DBMS_OUTPUT.PUT_LINE('Incorrect start position');
+    END;
+
+  IF NOT found_solution THEN
+    DBMS_OUTPUT.PUT_LINE('No solutions found');
+  END IF;
+
+END;
+/
