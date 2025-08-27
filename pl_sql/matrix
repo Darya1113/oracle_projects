@@ -1,0 +1,722 @@
+SET SERVEROUTPUT ON;
+
+--Спецификация пакета
+CREATE OR REPLACE PACKAGE MATRIX IS
+    --Типы данных
+    TYPE matrix_row IS TABLE OF NUMBER;
+    TYPE matrix_tab IS TABLE OF matrix_row;
+    --Процедуры и функции
+    FUNCTION SUM(
+      FILE_NAME IN VARCHAR2,
+      SEPARATOR IN VARCHAR2 := '/') RETURN matrix_tab;
+    FUNCTION SUBTRACTION(
+      FILE_NAME IN VARCHAR2,
+      SEPARATOR IN VARCHAR2 := '/') RETURN matrix_tab;
+    FUNCTION TRANSPOSE(
+      FILE_NAME IN VARCHAR2,
+      SEPARATOR IN VARCHAR2 := '/') RETURN matrix_tab;
+    FUNCTION MULTIPLY(
+      FILE_NAME IN VARCHAR2,
+      SEPARATOR IN VARCHAR2 := '/') RETURN matrix_tab;
+    FUNCTION INVERSE(
+      FILE_NAME IN VARCHAR2,
+      SEPARATOR IN VARCHAR2 := '/') RETURN matrix_tab;
+    FUNCTION EXPONENTIATION(
+      NUM IN NUMBER,
+      FILE_NAME IN VARCHAR2,
+      SEPARATOR IN VARCHAR2 := '/') RETURN matrix_tab;
+END MATRIX;
+
+/
+--Тело пакета
+CREATE OR REPLACE PACKAGE BODY MATRIX IS
+--PRIVATE-ФУНКЦИИ
+    --Процедура выводит указанную матрицу на экран
+    --Вход: p_matrix - матрица.
+    PROCEDURE SHOW_MATRIX(p_matrix IN matrix_tab) IS
+      v_matrix_row matrix_row := matrix_row();
+    BEGIN
+      FOR i IN 1..p_matrix.COUNT() LOOP
+        v_matrix_row := p_matrix(i);
+        FOR j IN 1..v_matrix_row.COUNT() LOOP
+          DBMS_OUTPUT.PUT(RPAD(TO_CHAR(ROUND(v_matrix_row(j), 3)), 8));
+        END LOOP;
+        DBMS_OUTPUT.NEW_LINE();
+      END LOOP;
+    END SHOW_MATRIX;
+
+    --Процедура составляет из данной текстовой строки строку матрицы и добавляет её в указаную матрицу.
+    --Вход: p_matrix - матрица; p_str - текстовая строка.
+    --Выход: p_matrix - матрица с добавленной строкой.
+    PROCEDURE ADD_ROW(
+      p_matrix IN OUT matrix_tab,
+      p_str IN VARCHAR2) IS
+      t_new_row matrix_row := matrix_row(); --новая строка матрицы
+      v_substr VARCHAR2(5);
+      v_pos NUMBER(2) := 1; --позиция, с которой читается подстрока
+    BEGIN
+      --Получаем числа из строки
+      LOOP
+        v_substr := SUBSTR(p_str, v_pos, INSTR(p_str, ' ', v_pos) - v_pos);
+        EXIT WHEN INSTR(p_str, ' ', v_pos) = 0;
+        v_pos := INSTR(p_str, ' ', v_pos) + 1;
+        --Добавляем число в строку матрицы
+        t_new_row.EXTEND();
+        t_new_row(t_new_row.LAST()) := TO_NUMBER(v_substr);
+      END LOOP;
+      --Для последнего числа в строке
+      v_substr := SUBSTR(p_str, v_pos);
+      --Добавляем число в строку матрицы
+      t_new_row.EXTEND();
+      t_new_row(t_new_row.LAST()) := TO_NUMBER(v_substr);
+      --Добавляем строку в матрицу
+      p_matrix.EXTEND();
+      p_matrix(p_matrix.LAST()) := t_new_row;
+    END;
+    
+    --Процедура читает две матрицы из указанного файла и сохраняет их в переменные FIRST_MATRIX и SECOND_MATRIX.
+    --Вход: FILE_NAME - имя файла; SEPARATOR - символ-разделитель матриц в файле (по умолчанию = '/').
+    --Выход: FIRST_MATRIX - первая считанная матрица; SECOND_MATRIX - вторая считанная матрица.
+    PROCEDURE READ_MATRIX_FROM_FILE(
+        FIRST_MATRIX OUT matrix_tab,
+        SECOND_MATRIX OUT matrix_tab,
+        FILE_NAME IN VARCHAR2,
+        SEPARATOR IN VARCHAR2 := '/') IS
+        f_file UTL_FILE.FILE_TYPE;
+        v_buffer VARCHAR2(30);
+        v_row_num NUMBER(2) := 1;
+        v_row_len NUMBER(2) := 0;
+        v_temp_row matrix_row := matrix_row(); --нужна для проверки корректности данных (все строки имеют одинаковое число элементов)
+    BEGIN
+        FIRST_MATRIX := matrix_tab();
+        SECOND_MATRIX := matrix_tab();
+        --Открываем файл с матрицами для чтения
+        IF NOT UTL_FILE.IS_OPEN(f_file) THEN
+            f_file := UTL_FILE.FOPEN ('STUD_PLSQL', FILE_NAME, 'R');
+        END IF;
+        --Вложенный анонимный блок для чтения матриц из файла FILE_NAME в переменные FIRST_MATRIX и SECOND_MATRIX
+        BEGIN
+            LOOP
+                UTL_FILE.GET_LINE(f_file, v_buffer);
+                v_buffer := TRIM(v_buffer);
+                EXIT WHEN v_buffer IN(SEPARATOR, '');
+                --Добавляем строку в матрицу FIRST_MATRIX
+                ADD_ROW(FIRST_MATRIX, v_buffer);
+                --Проверяем корректность считанной строки (что она имеет столько же элементов, сколько и первая строка матрицы)
+                v_temp_row := FIRST_MATRIX(FIRST_MATRIX.LAST());
+                IF v_row_len = 0 THEN
+                    v_row_len := v_temp_row.COUNT();
+                ELSIF v_temp_row.COUNT() != v_row_len THEN
+                    RAISE_APPLICATION_ERROR(-20007, 'Данные некорректны! Данная матрица имеет разное число элементов в разных строках.');
+                END IF;
+            END LOOP;
+            v_row_len := 0;
+            LOOP
+                UTL_FILE.GET_LINE(f_file, v_buffer);
+                v_buffer := TRIM(v_buffer);
+                EXIT WHEN v_buffer = '' OR v_buffer LIKE 'RESULT%' OR v_buffer = SEPARATOR;
+                --Добавляем строку в матрицу SECOND_MATRIX
+                ADD_ROW(SECOND_MATRIX, v_buffer);
+                 --Проверяем корректность считанной строки (что она имеет столько же элементов, сколько и первая строка матрицы)
+                v_temp_row := SECOND_MATRIX(SECOND_MATRIX.LAST());
+                IF v_row_len = 0 THEN
+                    v_row_len := v_temp_row.COUNT();
+                ELSIF v_temp_row.COUNT() != v_row_len THEN
+                    RAISE_APPLICATION_ERROR(-20007, 'Данные некорректны! Данная матрица имеет разное число элементов в разных строках.');
+                END IF;
+            END LOOP;
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                NULL;
+        END; -- ends Begin
+        --Закрываем файл 
+        UTL_FILE.FCLOSE(f_file);
+        --Выведем матрицы на экран
+        DBMS_OUTPUT.PUT_LINE('FIRST MATRIX:');
+        SHOW_MATRIX(FIRST_MATRIX);
+        DBMS_OUTPUT.PUT_LINE('SECOND MATRIX:');
+        SHOW_MATRIX(SECOND_MATRIX);
+    END READ_MATRIX_FROM_FILE;
+    
+    --Процедура читает матрицу из указанного файла и сохраняет её в переменную P_MATRIX. Если в файле записаны две матрицы через разделитель SEPARATOR, то считывается первая из них.
+    --Вход: FILE_NAME - имя файла; SEPARATOR - символ-разделитель матриц в файле (по умолчанию = '/').
+    --Выход: P_MATRIX - считанная матрица.
+    PROCEDURE READ_MATRIX_FROM_FILE(
+        P_MATRIX OUT matrix_tab,
+        FILE_NAME IN VARCHAR2,
+        SEPARATOR IN VARCHAR2 := '/') IS
+        f_file UTL_FILE.FILE_TYPE;
+        v_buffer VARCHAR2(30);
+        v_row_num NUMBER(2) := 1;
+        v_row_len NUMBER(2) := 0;
+        v_temp_row matrix_row := matrix_row(); --нужна для проверки корректности данных (все строки имеют одинаковое число элементов)
+    BEGIN
+        P_MATRIX := matrix_tab();
+        --Открываем файл с матрицами для чтения
+        IF NOT UTL_FILE.IS_OPEN(f_file) THEN
+            f_file := UTL_FILE.FOPEN('STUD_PLSQL', FILE_NAME, 'R');
+        END IF;
+        --Вложенный анонимный блок для чтения матриц из файла FILE_NAME в переменные FIRST_MATRIX и SECOND_MATRIX
+        BEGIN
+            LOOP
+                UTL_FILE.GET_LINE(f_file, v_buffer);
+                v_buffer := TRIM(v_buffer);
+                EXIT WHEN v_buffer IN(SEPARATOR, '');
+                --Добавляем строку в матрицу FIRST_MATRIX
+                ADD_ROW(P_MATRIX, v_buffer);
+                --Проверяем корректность считанной строки (что она имеет столько же элементов, сколько и первая строка матрицы)
+                v_temp_row := P_MATRIX(P_MATRIX.LAST());
+                IF v_row_len = 0 THEN
+                    v_row_len := v_temp_row.COUNT();
+                ELSIF v_temp_row.COUNT() != v_row_len THEN
+                    RAISE_APPLICATION_ERROR(-20007, 'Данные некорректны! Данная матрица имеет разное число элементов в разных строках.');
+                END IF;
+            END LOOP;
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                NULL;
+        END; -- ends Begin
+        --Закрываем файл 
+        UTL_FILE.FCLOSE(f_file);
+        --Выведем матрицы на экран
+        DBMS_OUTPUT.PUT_LINE('FIRST MATRIX:');
+        SHOW_MATRIX(P_MATRIX);
+    END READ_MATRIX_FROM_FILE;
+    
+    --Функция создаёт единичную матрицу заданного размера.
+    --Вход: p_size - размер матрицы.
+    --Выход: единичная матрица.
+    FUNCTION MAKE_IDENTITY_MATRIX(
+      p_size NUMBER)
+    RETURN matrix_tab IS
+      v_res_matrix matrix_tab := matrix_tab();
+      v_res_matrix_row matrix_row := matrix_row();
+    BEGIN
+      FOR i IN 1..p_size LOOP
+        FOR j IN 1..p_size LOOP
+          v_res_matrix_row.EXTEND();
+          IF i = j THEN
+            v_res_matrix_row(j) := 1;
+          ELSE
+            v_res_matrix_row(j) := 0;
+          END IF;
+        END LOOP;
+        v_res_matrix.EXTEND();
+        v_res_matrix(i) := v_res_matrix_row;
+      END LOOP;
+      RETURN v_res_matrix;
+    END MAKE_IDENTITY_MATRIX;
+    
+    --Функция проверяет, что матрицы имеют одинаковую размерность
+    --Вход: FIRST_MATRIX - первая матрица; SECOND_MATRIX - вторая матрица.
+    --Выход: TRUE - если их размерности равны; иначе - FALSE.
+    FUNCTION HAVE_SAME_SIZE(
+      FIRST_MATRIX IN matrix_tab,
+      SECOND_MATRIX IN matrix_tab)
+    RETURN BOOLEAN IS
+    BEGIN
+      IF FIRST_MATRIX.COUNT() = SECOND_MATRIX.COUNT() AND FIRST_MATRIX(1).COUNT() = SECOND_MATRIX(1).COUNT() THEN
+        RETURN TRUE;
+      ELSE 
+        RETURN FALSE;
+      END IF;
+    END HAVE_SAME_SIZE;
+    
+    --Функция проверяет, можно ли перемножить указанные матрицы
+    --Вход: FIRST_MATRIX - первая матрица; SECOND_MATRIX - вторая матрица.
+    --Выход: TRUE - если их можно перемножить; иначе - FALSE.
+    FUNCTION CAN_BE_MULTIPLIED(
+      FIRST_MATRIX IN matrix_tab,
+      SECOND_MATRIX IN matrix_tab) RETURN BOOLEAN IS
+    BEGIN
+      IF FIRST_MATRIX(1).COUNT() = SECOND_MATRIX.COUNT() THEN
+        RETURN TRUE;
+      ELSE
+        RETURN FALSE;
+      END IF;
+    END CAN_BE_MULTIPLIED;
+    
+    --Функция проверяет, что указанная матрица - квадратная.
+    --Вход: p_matrix - матрица.
+    --Выход: TRUE - если матрица квадратная; иначе - FALSE.
+    FUNCTION IS_SQUARE(
+      p_matrix IN matrix_tab)
+    RETURN BOOLEAN IS
+    BEGIN
+      IF p_matrix.COUNT() = p_matrix(1).COUNT() THEN
+        RETURN TRUE;
+      ELSE
+        RETURN FALSE;
+      END IF;
+    END IS_SQUARE;
+
+    --Функция суммирует (вычитает) две данных матрицы.
+    --Вход: p_first_matrix - первая матрица; p_second_matrix - вторая матрица; p_subtraction - указывает, нужно ли складывать или вычитать матрицы (по умолчанию - FALSE, т.е. сложение).
+    --Выход: результирующая матрица.
+    FUNCTION PRIVATE_SUM(
+      p_first_matrix IN matrix_tab,
+      p_second_matrix IN matrix_tab,
+      p_subtraction IN BOOLEAN := FALSE)
+    RETURN matrix_tab IS
+      v_res_matrix matrix_tab := matrix_tab();
+      v_fmatrix_row matrix_row := matrix_row();
+      v_smatrix_row matrix_row := matrix_row();
+      v_res_matrix_row matrix_row := matrix_row();
+    BEGIN
+      --Проверяем, можно ли суммировать (вычитать) матрицы
+      IF HAVE_SAME_SIZE(p_first_matrix, p_second_matrix) = FALSE THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Данные матрицы нельзя суммировать, так как они имеют различные размерности!');
+      END IF;
+      --Суммируем (вычитаем) матрицы
+      FOR i IN 1..p_first_matrix.COUNT() LOOP
+        v_fmatrix_row := p_first_matrix(i);
+        v_smatrix_row := p_second_matrix(i);
+        FOR j IN 1..v_fmatrix_row.COUNT() LOOP
+          --Собираем строку результирующей матрицы
+          v_res_matrix_row.EXTEND();
+          IF p_subtraction = FALSE THEN
+            v_res_matrix_row(j) := v_fmatrix_row(j) + v_smatrix_row(j);
+          ELSE
+            v_res_matrix_row(j) := v_fmatrix_row(j) - v_smatrix_row(j);
+          END IF;
+        END LOOP;
+        --Добавляем строку результирующей матрицы в результирующую матрицу v_res_matrix
+        v_res_matrix.EXTEND();
+        v_res_matrix(i) := v_res_matrix_row;
+        v_res_matrix_row.DELETE();
+      END LOOP;
+      --Возвращаем результирующую матрицу
+      RETURN v_res_matrix;
+    END PRIVATE_SUM;
+    
+    --Функция транспонирует указанную матрицу
+    --Вход: p_matrix - матрица.
+    --Выход: транспонированная матрица.
+    FUNCTION PRIVATE_TRANSPOSE(
+      p_matrix IN matrix_tab)
+    RETURN matrix_tab IS
+      v_matrix_row matrix_row := matrix_row();
+      v_res_matrix matrix_tab := matrix_tab();
+      v_res_matrix_row matrix_row := matrix_row();
+    BEGIN
+      FOR j IN 1..p_matrix(1).COUNT() LOOP
+        FOR i IN 1..p_matrix.COUNT() LOOP
+          --Получаем i-ю строку исходной матрицы
+          v_matrix_row := p_matrix(i);
+          --Добавляем значение (i, j)-го элемента исходной матрицы в (j, i)-й элемент результирующей матрицы
+          v_res_matrix_row.EXTEND();
+          v_res_matrix_row(i) := v_matrix_row(j);
+          --Очищаем переменную строки исходной матрицы
+          v_matrix_row.DELETE();
+        END LOOP;
+        --Добавляем транспонированную строку в результирующую матрицу
+        v_res_matrix.EXTEND();
+        v_res_matrix(j) := v_res_matrix_row;
+        --Очищаем переменную строки результирующей матрицы
+        v_res_matrix_row.DELETE();
+      END LOOP;
+      --Возвращаем транспонированную матрицу
+      RETURN v_res_matrix;
+    END PRIVATE_TRANSPOSE;
+    
+    --Функция перемножает две матрицы
+    --Вход: p_first_matrix - первая матрица; p_second_matrix - вторая матрица.
+    --Выход: результирующая матрица.
+    FUNCTION PRIVATE_MULTIPLY(
+      p_first_matrix IN matrix_tab,
+      p_second_matrix IN matrix_tab,
+      p_internal_operation IN BOOLEAN := FALSE) 
+    RETURN matrix_tab IS
+      v_res_matrix matrix_tab := matrix_tab();
+      v_transp_smatrix matrix_tab := matrix_tab();
+      v_fmatrix_row matrix_row := matrix_row();
+      v_transp_smatrix_row matrix_row := matrix_row();
+      v_res_matrix_row matrix_row := matrix_row();
+      v_temp_sum NUMBER(4) := 0;
+    BEGIN
+      IF CAN_BE_MULTIPLIED(p_first_matrix, p_second_matrix) = FALSE THEN
+        RAISE_APPLICATION_ERROR(-20002, 'Данные матрицы нельзя перемножить, так как число столбцов первой матрицы не равно числу строк второй матрицы!');
+      END IF;
+      --Для удовства вычислений транспонируем вторую матрицу
+      v_transp_smatrix := PRIVATE_TRANSPOSE(p_second_matrix);
+      FOR i IN 1..p_first_matrix.COUNT() LOOP
+        --Получим i-ю строку из p_first_matrix
+        v_fmatrix_row := p_first_matrix(i);
+        FOR j IN 1..p_second_matrix(1).COUNT() LOOP
+          --Получим j-й столбец из p_second_matrix (j-я строка из v_transp_smatrix)
+          v_transp_smatrix_row := v_transp_smatrix(j);
+          --Вычислим (i,j)-й элемент результирующей матрицы
+          FOR r IN 1..p_second_matrix.COUNT() LOOP
+            v_temp_sum := v_temp_sum + (v_fmatrix_row(r)*v_transp_smatrix_row(r));
+          END LOOP;
+          --Добавим элемент в строку результирующей матрицы
+          v_res_matrix_row.EXTEND();
+          v_res_matrix_row(j) := v_temp_sum;
+          v_temp_sum := 0;
+        END LOOP;
+        --Добавим строку в результирующую матрицу
+        v_res_matrix.EXTEND();
+        v_res_matrix(i) := v_res_matrix_row;
+        --Очистим переменную строки результирующей таблицы
+        v_res_matrix_row.DELETE();
+      END LOOP;
+      --Возвращаем транспонированную матрицу
+      RETURN v_res_matrix;
+    END PRIVATE_MULTIPLY;
+    
+    --Процедура записывает в файл результат операции.
+    --Вход: FILE_NAME - имя файла; RES_MATRIX - результирующая матрица; OPERATION_NAME - название операции.
+    PROCEDURE PUT_RESULT_INTO_FILE(
+      FILE_NAME IN VARCHAR2,
+      RES_MATRIX IN matrix_tab,
+      OPERATION_NAME IN VARCHAR2) IS
+      f_file UTL_FILE.FILE_TYPE;
+      v_res_matrix_row matrix_row := matrix_row();
+      v_str VARCHAR2(50) := '';
+    BEGIN
+      --Открываем файл с матрицами для добавления данных в конец файла
+      IF NOT UTL_FILE.IS_OPEN(f_file) THEN
+          f_file := UTL_FILE.FOPEN ('STUD_PLSQL', FILE_NAME, 'A');
+      END IF;
+      --Добавляем в конец файла результат операции
+      --UTL_FILE.PUT_LINE(f_file, 'RESULTS:');
+      --UTL_FILE.NEW_LINE(f_file);
+      --UTL_FILE.NEW_LINE(f_file);
+      UTL_FILE.PUT_LINE(f_file, 'RESULT ' || OPERATION_NAME || ':');
+      --UTL_FILE.NEW_LINE(f_file);
+      FOR i IN 1..RES_MATRIX.COUNT() LOOP
+        v_res_matrix_row := RES_MATRIX(i);
+        FOR j IN 1..v_res_matrix_row.COUNT() LOOP
+          v_str := v_str || TO_CHAR(v_res_matrix_row(j)) || ' ';
+        END LOOP;
+        --Добавляем строку в файл
+        UTL_FILE.PUT_LINE(f_file, v_str);
+        --UTL_FILE.NEW_LINE(f_file);
+        v_str := '';
+      END LOOP;
+      --Закрываем файл 
+      UTL_FILE.FCLOSE(f_file);
+    END;
+    
+--PUBLIC-ФУНКЦИИ
+    --Функция суммирует (вычитает) две данных матрицы.
+    --Вход: FILE_NAME - имя файла; SEPARATOR - разделитель матриц в файле.
+    --Выход: результирующая матрица.
+    FUNCTION SUM(
+      FILE_NAME IN VARCHAR2,
+      SEPARATOR IN VARCHAR2 := '/')
+    RETURN matrix_tab IS
+      v_first_matrix matrix_tab := matrix_tab();
+      v_second_matrix matrix_tab := matrix_tab();
+      v_res_matrix matrix_tab := matrix_tab();
+    BEGIN
+      --Читаем матрицы из файла
+      READ_MATRIX_FROM_FILE(v_first_matrix, v_second_matrix, FILE_NAME, SEPARATOR);
+      --Суммируем матрицы
+      v_res_matrix := PRIVATE_SUM(v_first_matrix, v_second_matrix);
+      --Выводим получившуюся матрицу на экран
+      DBMS_OUTPUT.PUT_LINE('SUM RESULT:');
+      SHOW_MATRIX(v_res_matrix);
+      PUT_RESULT_INTO_FILE('example_file.txt', v_res_matrix, 'Сумма');
+      --Возвращаем результирующую матрицу
+      RETURN v_res_matrix;
+    END SUM;
+    
+    --Функция вычитает две данных матрицы.
+    --Вход: p_first_matrix - первая матрица; p_second_matrix - вторая матрица.
+    --Выход: результирующая матрица.
+    FUNCTION SUBTRACTION(
+      FILE_NAME IN VARCHAR2,
+      SEPARATOR IN VARCHAR2 := '/') 
+    RETURN matrix_tab IS
+      v_first_matrix matrix_tab := matrix_tab();
+      v_second_matrix matrix_tab := matrix_tab();
+      v_res_matrix matrix_tab := matrix_tab();
+    BEGIN
+      --Читаем матрицы из файла
+      READ_MATRIX_FROM_FILE(v_first_matrix, v_second_matrix, FILE_NAME, SEPARATOR);
+      --Вычитаем матрицы
+      v_res_matrix := PRIVATE_SUM(v_first_matrix, v_second_matrix, TRUE);
+      --Выводим получившуюся матрицу на экран
+      DBMS_OUTPUT.PUT_LINE('SUBTRACTION RESULT:');
+      SHOW_MATRIX(v_res_matrix);
+      PUT_RESULT_INTO_FILE('example_file.txt', v_res_matrix, 'Разность');
+      RETURN v_res_matrix;
+    END SUBTRACTION;
+    
+    --Функция транспонирует указанную матрицу
+    --Вход: p_matrix - матрица.
+    --Выход: транспонированная матрица.
+    FUNCTION TRANSPOSE(
+      FILE_NAME IN VARCHAR2,
+      SEPARATOR IN VARCHAR2 := '/')
+    RETURN matrix_tab IS
+      p_matrix matrix_tab := matrix_tab();
+      v_matrix_row matrix_row := matrix_row();
+      v_res_matrix matrix_tab := matrix_tab();
+      v_res_matrix_row matrix_row := matrix_row();
+    BEGIN
+      --Читаем матрицу из файла
+      READ_MATRIX_FROM_FILE(p_matrix, FILE_NAME, SEPARATOR);
+      --Транспонируем её
+      FOR j IN 1..p_matrix(1).COUNT() LOOP
+        FOR i IN 1..p_matrix.COUNT() LOOP
+          --Получаем i-ю строку исходной матрицы
+          v_matrix_row := p_matrix(i);
+          --Добавляем значение (i, j)-го элемента исходной матрицы в (j, i)-й элемент результирующей матрицы
+          v_res_matrix_row.EXTEND();
+          v_res_matrix_row(i) := v_matrix_row(j);
+          --Очищаем переменную строки исходной матрицы
+          v_matrix_row.DELETE();
+        END LOOP;
+        --Добавляем транспонированную строку в результирующую матрицу
+        v_res_matrix.EXTEND();
+        v_res_matrix(j) := v_res_matrix_row;
+        --Очищаем переменную строки результирующей матрицы
+        v_res_matrix_row.DELETE();
+      END LOOP;
+      --Выводим результат
+      DBMS_OUTPUT.PUT_LINE('TRANSPOSE RESULT:');
+      SHOW_MATRIX(v_res_matrix);
+      PUT_RESULT_INTO_FILE('example_file.txt', v_res_matrix, 'Транспонирование');
+      --Возвращаем транспонированную матрицу
+      RETURN v_res_matrix;
+    END TRANSPOSE;
+    
+    --Функция перемножает две матрицы
+    --Вход: p_first_matrix - первая матрица; p_second_matrix - вторая матрица.
+    --Выход: результирующая матрица.
+    FUNCTION MULTIPLY(
+      FILE_NAME IN VARCHAR2,
+      SEPARATOR IN VARCHAR2 := '/') 
+    RETURN matrix_tab IS
+      v_first_matrix matrix_tab := matrix_tab();
+      v_second_matrix matrix_tab := matrix_tab();
+      v_res_matrix matrix_tab := matrix_tab();
+    BEGIN
+      --Читаем матрицы из файла
+      READ_MATRIX_FROM_FILE(v_first_matrix, v_second_matrix, FILE_NAME, SEPARATOR);
+      v_res_matrix := PRIVATE_MULTIPLY(v_first_matrix, v_second_matrix);
+      --Выводим результат
+      DBMS_OUTPUT.PUT_LINE('MULTIPLY RESULT:');
+      SHOW_MATRIX(v_res_matrix);
+      PUT_RESULT_INTO_FILE('example_file.txt', v_res_matrix, 'Умножение');
+      --Возвращаем транспонированную матрицу
+      RETURN v_res_matrix;
+    END MULTIPLY;
+    
+    --Функция ищет обратную матрицу.
+    --Вход: p_matrix - матрица.
+    --Выход: Обратная матрица.
+    FUNCTION INVERSE(
+      FILE_NAME IN VARCHAR2,
+      SEPARATOR IN VARCHAR2 := '/')
+    RETURN matrix_tab IS
+      p_matrix matrix_tab := matrix_tab();
+      v_size NUMBER(2);
+      v_res_matrix matrix_tab := matrix_tab();
+      v_res_matrix_row matrix_row := matrix_row();
+      v_temp_matrix matrix_tab := matrix_tab();
+      v_temp_matrix_row matrix_row := matrix_row();
+      v_change_row matrix_row := matrix_row();
+      v_change_res_row matrix_row := matrix_row();
+      v_flag BOOLEAN := TRUE; --флаг того, что матрица может быть обратимой (т.е. не имеет нулевых столбцов или строк)
+      v_first_value NUMBER; --значение первого ненулевого элемента в начальной строке
+    BEGIN
+      --Читаем матрицу из файла
+      READ_MATRIX_FROM_FILE(p_matrix, FILE_NAME, SEPARATOR);
+      --Проверяем, является ли данная матрица квадратной (иначе она необратима)
+      IF IS_SQUARE(p_matrix) = FALSE THEN
+        RAISE_APPLICATION_ERROR(-20003, 'Данная матрица необратима, так как она не является квадратной!');
+      END IF;
+      --Сохраняем в переменную размер матрицы
+      v_size := p_matrix.COUNT();
+      --Создаём единичную матрицу такого же размера
+      v_res_matrix := MAKE_IDENTITY_MATRIX(v_size);
+      --Копируем исходную матрицу во временную для применения к ней элементарных преобразований
+      v_temp_matrix := p_matrix;
+      FOR i IN 1..(v_size - 1) LOOP
+        v_temp_matrix_row := v_temp_matrix(i);
+        v_res_matrix_row := v_res_matrix(i); --здесь и далее проводим аналогичные действия с единичной матрицей
+        --Если первый элемент строки матрицы нулевой, то ищем другую строку с ненулевым первым элементом и меняем их местами
+        IF v_temp_matrix_row(i) = 0 THEN
+          v_flag := FALSE;
+          FOR k IN (i + 1)..v_size LOOP
+            v_change_row := v_temp_matrix(k);
+            v_change_res_row := v_res_matrix(k);
+            IF v_change_row(i) != 0 THEN
+              --Меняем строки местами и выходим из цикла
+              v_temp_matrix(i) := v_change_row;
+              v_temp_matrix(k) := v_temp_matrix_row;
+              v_temp_matrix_row := v_temp_matrix(i);
+              --Аналогично с единичной матрицей
+              v_res_matrix(i) := v_change_res_row;
+              v_res_matrix(k) := v_res_matrix_row;
+              v_res_matrix_row := v_res_matrix(i);
+              v_flag := TRUE;
+              EXIT;
+            END IF;
+          END LOOP;
+          --Проверяем, найден ли в столбце ненулевой элемент (т.е. не имеет ли матрица нулевого столбца)
+          IF v_flag = FALSE THEN
+            --Если в столбце нет ненулевых элементов
+            RAISE_APPLICATION_ERROR(-20004, 'Данная матрица необратима, так как она имеет нулевой определитель!');
+          END IF;
+        END IF;
+        --Выполняем элементарные преобразования над копией матрицы
+        --Сделаем первый ненулевой элемент начальной строки равным единице (т.е. разделим все элементы строки на значение первого элемента)
+        v_first_value := v_temp_matrix_row(i);
+        FOR j IN i..v_size LOOP
+          v_temp_matrix_row(j) := v_temp_matrix_row(j) / v_first_value;
+          v_res_matrix_row(j) := v_res_matrix_row(j) / v_first_value;
+        END LOOP;
+        --Заменяем старую i-ю строку в копии матрицы на новую (и аналогично с единичной матрицей)
+        v_temp_matrix(i) := v_temp_matrix_row;
+        v_res_matrix(i) := v_res_matrix_row;
+        --Сделаем i-е элементы всех последующих строк нулевыми (т.е. вычтем из всех последующих строк начальную строку, умноженную на отрицательное значение первого элемента текущей строки)
+        FOR k IN (i+1)..v_size LOOP
+          v_change_row := v_temp_matrix(k);
+          v_change_res_row := v_res_matrix(k);
+          v_first_value := v_change_row(i);
+          v_flag := FALSE;
+          FOR j IN i..v_size LOOP
+            v_change_row(j) := v_change_row(j) - (v_temp_matrix_row(j) * v_first_value);
+            v_change_res_row(j) := v_change_res_row(j) - (v_res_matrix_row(j) * v_first_value);
+            --Проверяем, что j-й элемент ненулевой (нужно для проверки матрицы на обратимость)
+            IF v_change_row(j) != 0 THEN
+              v_flag := TRUE;
+            END IF;
+          END LOOP;
+          --Проверяем, что в строке есть хотя бы один ненулевой элемент (иначе матрица необратима)
+          IF v_flag = FALSE THEN
+            --Если в строке нет ненулевых элементов
+            RAISE_APPLICATION_ERROR(-20004, 'Данная матрица необратима, так как она имеет нулевой определитель!');
+          END IF;
+          --Заменяем старую k-ю строку в копии матрицы на новую (и аналогично с единичной матрицей)
+          v_temp_matrix(k) := v_change_row;
+          v_res_matrix(k) := v_change_res_row;
+        END LOOP;
+      END LOOP;
+      --Сделаем последний элемент последней строки равны единице
+      v_temp_matrix_row := v_temp_matrix(v_size);
+      v_first_value := v_temp_matrix_row(v_size);
+      v_temp_matrix_row(v_size) := v_temp_matrix_row(v_size) / v_first_value;
+      v_temp_matrix(v_size) := v_temp_matrix_row;
+      --Аналогично с единичной матрицей
+      v_res_matrix_row := v_res_matrix(v_size);
+      FOR j IN 1..v_size LOOP
+        v_res_matrix_row(j) := v_res_matrix_row(j) / v_first_value;
+      END LOOP;
+      v_res_matrix(v_size) := v_res_matrix_row;
+      --Если матрица обратима (т.е. не возникли исключения), то приступаем ко второму этапу (обратный ход метода Жордана-Гаусса)
+      --Сделаем все элементы столбцов нулевыми, кроме элемента на диагонали. Т.е. приведём к единичной матрице.
+      FOR i IN REVERSE 2..v_size LOOP
+        v_temp_matrix_row := v_temp_matrix(i);
+        v_res_matrix_row := v_res_matrix(i); --аналогично для единичной матрицы
+        --Проходим по всем строкам снизу вверх, обнуляя текущий столбец
+        FOR k IN REVERSE 1..(i - 1) LOOP
+          v_change_row := v_temp_matrix(k);
+          v_change_res_row := v_res_matrix(k);
+          v_first_value := v_change_row(i);
+          FOR j IN REVERSE 1..v_size LOOP
+            v_change_row(j) := v_change_row(j) - (v_temp_matrix_row(j) * v_first_value);
+            v_change_res_row(j) := v_change_res_row(j) - (v_res_matrix_row(j) * v_first_value);
+          END LOOP;
+          v_temp_matrix(k) := v_change_row;
+          v_res_matrix(k) := v_change_res_row;
+        END LOOP;
+      END LOOP;
+      --Выведем обратную матрицу на экран
+      DBMS_OUTPUT.PUT_LINE('INVERSE RESULT');
+      SHOW_MATRIX(v_res_matrix);
+      PUT_RESULT_INTO_FILE('example_file.txt', v_res_matrix, 'Обратная матрица');
+      --Возвращаем обратную матрицу
+      RETURN v_res_matrix;
+    END INVERSE;
+    
+    --Функция возводит указанную матрицу в указанную степень.
+    --Вход: p_matrix - матрица; p_num - степень.
+    --Выход: матрица, возведённая в указанную степень.
+    FUNCTION EXPONENTIATION(
+      NUM IN NUMBER,
+      FILE_NAME IN VARCHAR2,
+      SEPARATOR IN VARCHAR2 := '/')
+    RETURN matrix_tab IS
+      p_matrix matrix_tab := matrix_tab();
+      v_res_matrix matrix_tab := matrix_tab();
+    BEGIN
+      --Читаем матрицу из файла
+      READ_MATRIX_FROM_FILE(p_matrix, FILE_NAME, SEPARATOR);
+      --Проверяем, что матрица квадратная (иначе её нельзя возводить с степень)
+      IF IS_SQUARE(p_matrix) = FALSE THEN
+        RAISE_APPLICATION_ERROR(-20005, 'Данную матрицу нельзя возвести в степень,так как она не является квадратной!');
+      END IF;
+      IF NUM < 0 THEN
+          RAISE_APPLICATION_ERROR(-20006, 'Некорректное значение степени!');
+      ELSIF NUM = 0 THEN
+        --Возвращаем единичную матрицу
+        v_res_matrix := MAKE_IDENTITY_MATRIX(p_matrix.COUNT());
+      ELSIF NUM = 1 THEN
+        v_res_matrix := p_matrix;
+      ELSE
+        v_res_matrix := p_matrix;
+        FOR i IN 2..NUM LOOP
+          v_res_matrix := PRIVATE_MULTIPLY(v_res_matrix, p_matrix);
+        END LOOP;
+      END IF;
+      --Выводим результат
+      DBMS_OUTPUT.PUT_LINE('EXPONENTIATION RESULT:');
+      SHOW_MATRIX(v_res_matrix);
+      PUT_RESULT_INTO_FILE('example_file.txt', v_res_matrix, 'Возведение в степень');
+      --Возвращаем результат
+      RETURN v_res_matrix;
+    END EXPONENTIATION;
+END MATRIX;
+
+/
+--Вызов процедуры чтения матриц из файла
+DECLARE
+  v_res_matrix MATRIX.matrix_tab := MATRIX.matrix_tab();
+BEGIN
+  BEGIN
+    v_res_matrix := MATRIX.SUM('example_file.txt');
+  EXCEPTION
+    WHEN OTHERS THEN
+      DBMS_OUTPUT.PUT_LINE('Ошибка в функции SUM: ' || SQLERRM);
+  END;
+
+  BEGIN
+    v_res_matrix := MATRIX.SUBTRACTION('example_file.txt');
+  EXCEPTION
+    WHEN OTHERS THEN
+      DBMS_OUTPUT.PUT_LINE('Ошибка в функции SUBTRACTION: ' || SQLERRM);
+  END;
+
+  BEGIN
+    v_res_matrix := MATRIX.TRANSPOSE('example_file.txt');
+  EXCEPTION
+    WHEN OTHERS THEN
+      DBMS_OUTPUT.PUT_LINE('Ошибка в функции TRANSPOSE: ' || SQLERRM);
+  END;
+
+  BEGIN
+    v_res_matrix := MATRIX.MULTIPLY('example_file.txt');
+  EXCEPTION
+    WHEN OTHERS THEN
+      DBMS_OUTPUT.PUT_LINE('Ошибка в функции MULTIPLY: ' || SQLERRM);
+  END;
+
+  BEGIN
+    v_res_matrix := MATRIX.INVERSE('example_file.txt');
+  EXCEPTION
+    WHEN OTHERS THEN
+      DBMS_OUTPUT.PUT_LINE('Ошибка в функции INVERSE: ' || SQLERRM);
+  END;
+
+  BEGIN
+    v_res_matrix := MATRIX.EXPONENTIATION(3, 'example_file.txt');
+  EXCEPTION
+    WHEN OTHERS THEN
+      DBMS_OUTPUT.PUT_LINE('Ошибка в функции EXPONENTIATION: ' || SQLERRM);
+  END;
+END;
