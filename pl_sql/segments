@@ -1,0 +1,39 @@
+CREATE OR REPLACE PROCEDURE GET_BLOB_SEGMENTS_INFO AS
+BEGIN
+    -- Выводим заголовки колонок
+    DBMS_OUTPUT.PUT_LINE(RPAD('НОМЕР', 10) || ' ' || 
+                         RPAD('ИМЯ СЕГМЕНТА', 20) || ' ' || 
+                         RPAD('ИМЯ ТАБЛИЦЫ', 20) || ' ' || 
+                         RPAD('ИМЯ ТАБЛИЧНОГО ПРОСТРАНСТВА', 30) || ' ' || 
+                         RPAD('СВОБОДНОЕ МЕСТО (БАЙТ)', 22));
+
+    -- Объявляем курсор для выбора информации о сегментах
+    FOR seg_info_rec IN (
+        SELECT 
+            ROWNUM AS "НОМЕР",
+            t.COLUMN_NAME AS "ИМЯ СЕГМЕНТА",  
+            t.TABLE_NAME AS "ИМЯ ТАБЛИЦЫ", 
+            s.TABLESPACE_NAME AS "ИМЯ ТАБЛИЧНОГО ПРОСТРАНСТВА",  
+            s.BYTES AS "СВОБОДНОЕ МЕСТО (БАЙТ)"  
+        FROM 
+            USER_TAB_COLUMNS t
+            JOIN USER_SEGMENTS s ON t.TABLE_NAME = s.SEGMENT_NAME  -- Присоединяем таблицу с информацией о сегментах
+        WHERE 
+            t.DATA_TYPE = 'CLOB'
+    ) LOOP
+        -- Выводим результат
+        DBMS_OUTPUT.PUT_LINE(RPAD(seg_info_rec."НОМЕР", 10) || ' ' || 
+                             RPAD(seg_info_rec."ИМЯ СЕГМЕНТА", 20) || ' ' || 
+                             RPAD(seg_info_rec."ИМЯ ТАБЛИЦЫ", 20) || ' ' || 
+                             RPAD(seg_info_rec."ИМЯ ТАБЛИЧНОГО ПРОСТРАНСТВА", 30) || ' ' || 
+                             RPAD(seg_info_rec."СВОБОДНОЕ МЕСТО (БАЙТ)", 22));
+    END LOOP;
+END;
+/
+
+SET SERVEROUTPUT ON;
+
+BEGIN
+    GET_BLOB_SEGMENTS_INFO;
+END;
+/
