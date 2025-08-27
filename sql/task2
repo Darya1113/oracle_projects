@@ -1,0 +1,30 @@
+CREATE TABLE numbers (num number)
+
+INSERT INTO numbers (num)
+SELECT level
+FROM dual
+CONNECT BY LEVEL <= 100; /*создаем вспомогательную таблицу с рядом из чисел от 1 до 100*/
+/*************************/
+
+UNDEFINE str
+
+WITH sings AS /*создаем временное табличное пространство*/
+(SELECT *
+ FROM (SELECT '+'||LTRIM(REPLACE('&&str',' '),'-')||'+' nstr
+ FROM dual) nstr  /*добавляем плюсы в начало и в конец строки*/
+ JOIN (SELECT ROWNUM numb FROM employees) numb 
+ ON SUBSTR(nstr.nstr, numb.numb, 1) IN ('+', '-')) /*соединяем с рядом чисел и выбираем числа, на каких позициях стоят знаки*/
+ 
+SELECT '&str' "String", 
+SUM(CASE WHEN ROWNUM = 1 /*если ряд 1, то если мы рассматриваем первое число*/
+         THEN CASE WHEN REPLACE('&str',' ') LIKE '-%' 
+                   THEN -ABS(TO_NUMBER(SUBSTR(nstr, ind1, ind2-ind1)))  /*если перед числом в начальной строке стоял минус, то в сумму и берем его с минусом*/
+                   ELSE ABS(TO_NUMBER(SUBSTR(nstr, ind1, ind2-ind1))) /*если без минуса, то оставля*/END 
+         ELSE TO_NUMBER(SUBSTR(nstr, ind1, ind2-ind1)) END) "Result" /*в любом другом случае просто берем нужную подстроку и добавляем это число в сумму*/
+FROM(SELECT ind1.nstr
+            ,ind1.numb ind1
+            ,min(ind2.numb) ind2 
+     FROM sings ind1 JOIN sings ind2 
+     ON ind1.numb < ind2.numb 
+     GROUP BY ind1.numb, ind1.nstr 
+     ORDER BY ind1);
