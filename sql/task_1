@@ -1,0 +1,41 @@
+DROP TABLE T6;
+CREATE TABLE T6 (ID NUMBER(5),
+CONSTRAINT id_K_1
+PRIMARY KEY (ID));
+INSERT INTO T6 VALUES(3);
+INSERT INTO T6 VALUES(11);
+INSERT INTO T6 VALUES(1);
+INSERT INTO T6 VALUES(8);
+INSERT INTO T6 VALUES(9);
+INSERT INTO T6 VALUES(6);
+INSERT INTO T6 VALUES(23);
+
+/*В C хранятся наши числа по возрастанию и их порядковые номера.*/
+WITH TAB1 AS (
+    SELECT ID, ROWNUM R 
+    FROM T6
+    ORDER BY ID),
+
+/*Выводим все последовательности чисел через запятую, которые начинаются с первого числа*/ 
+TAB2 AS(SELECT SUBSTR(SYS_CONNECT_BY_PATH(ID, ','), 2) STR, ID, LEVEL L
+        FROM TAB1
+        START WITH ID = (SELECT MIN(ID) FROM TAB1)
+        CONNECT BY PRIOR ID < ID),
+
+/*Выводим все последовательности чисел через запятую, которые начинаются с последнего числа*/      
+TAB3 AS(SELECT SUBSTR(SYS_CONNECT_BY_PATH(ID, ','), 2) STR, ID, LEVEL L
+        FROM TAB1
+        START WITH ID = (SELECT MAX(ID) FROM TAB1)
+        CONNECT BY PRIOR ID > ID),   
+    
+/*Получаем перую половину последовательности включая само число*/ 
+L AS (SELECT ID, STR
+      FROM TAB2 JOIN TAB1
+      USING (ID)
+      WHERE L = R)
+
+/*Соединяем левую часть горки с правой, начиная вхождение правой с запятой после нужного числа в R */
+SELECT  ID, TRIM (TRAILING ',' FROM STR||','|| SUBSTR(R, INSTR(',' || R || ',', ','|| ID || ',') + LENGTH(ID) + 1)) AS "Result"
+/*Самая длинная последовательность в обратном порядке*/
+FROM L, (SELECT STR R FROM TAB3 WHERE LENGTH(STR) = (SELECT MAX(LENGTH(STR)) FROM TAB3))
+ORDER BY ID;
